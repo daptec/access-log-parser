@@ -1,23 +1,24 @@
 package com.stepup;
 
-import java.io.File;
-import java.util.Scanner;
+import ru.courses.other.Fraction;
 
 public class Main {
-    public static void main(String[] args) {
-        int counter = 0;
-        while (true) {
-            System.out.println("Введите путь к файлу: ");
-            String path = new Scanner(System.in).nextLine();
-            File file = new File(path);
-            boolean fileExists = file.exists();
-            boolean isDirectory = file.isDirectory();
-            if (!(fileExists || isDirectory)) {
-                System.out.println("Указанный файл не существует или указанный путь является путем к папке");
-                continue;
-            }
-            counter++;
-            System.out.println("Путь указан верно. \nЭто файл номер: " + counter);
+    public static double sumAll(Number... numbers) {
+        double sum = 0;
+        for (Number num : numbers) {
+            sum += num.doubleValue();
         }
+        return sum;
+    }
+
+    public static void main(String[] args) {
+        double result1 = sumAll(3.6, new Fraction(49, 12), 3, new Fraction(3, 2));
+        System.out.println(result1);
+
+        double result2 = sumAll(new Fraction(1, 3), 1);
+        System.out.println(result2);
+
+        double result3 = sumAll(2, new Fraction(3, 5), 2.3);
+        System.out.println(result3);
     }
 }
