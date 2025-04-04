@@ -4,50 +4,54 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.util.Scanner;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class Main {
     public static void main(String[] args) {
-        int counter = 0;
-        while (true) {
-            System.out.println("Введите путь к файлу: ");
-            String path = new Scanner(System.in).nextLine();
-            File file = new File(path);
-            boolean fileExists = file.exists();
-            boolean isDirectory = file.isDirectory();
-            if (!(fileExists || isDirectory)) {
-                System.out.println("Указанный файл не существует или указанный путь является путем к папке");
-                continue;
-            }
-            counter++;
-            System.out.println("Путь указан верно. \nЭто файл номер: " + counter);
+        Scanner scanner = new Scanner(System.in);
+        System.out.println("Введите путь к файлу: ");
+        String path = scanner.nextLine();
 
-            try (FileReader fileReader = new FileReader(path);
-                 BufferedReader reader = new BufferedReader(fileReader)) {
-                int totalLines = 0;
-                int maxLength = 0;
-                int minLength = Integer.MAX_VALUE;
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    int length = line.length();
-                    totalLines++;
-                    if (length > 1024) {
-                        throw new RuntimeException("Строка превышает 1024 символа: " + line);
-                    }
-                    if (length > maxLength) {
-                        maxLength = length;
-                    }
-                    if (length < minLength) {
-                        minLength = length;
+        int totalRequests = 0;
+        int googleBotRequests = 0;
+        int yandexBotRequests = 0;
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(path))) {
+            String line;
+            Pattern userAgentPattern = Pattern.compile("\"(Mozilla/[^\\\"]+)\"");
+
+            while ((line = reader.readLine()) != null) {
+                totalRequests++;
+                Matcher matcher = userAgentPattern.matcher(line);
+                if (matcher.find()) {
+                    String userAgent = matcher.group(1);
+                    int openBracketIndex = userAgent.indexOf("(");
+                    int closeBracketIndex = userAgent.indexOf(")");
+                    if (openBracketIndex != -1 && closeBracketIndex != -1) {
+                        String firstBrackets = userAgent.substring(openBracketIndex + 1, closeBracketIndex);
+                        String[] parts = firstBrackets.split(";");
+                        if (parts.length >= 2) {
+                            String fragment = parts[1].trim();
+                            String botName = fragment.split("/")[0];
+                            if (botName.equalsIgnoreCase("Googlebot")) {
+                                googleBotRequests++;
+                            } else if (botName.equalsIgnoreCase("Yandexbot")) {
+                                yandexBotRequests++;
+                            }
+                        }
                     }
                 }
-                System.out.println("общее количество строк: " + totalLines +
-                        "\nдлина самой длинной строки: " + maxLength +
-                        "\nдлина самой короткой строки: " + minLength);
-            } catch (RuntimeException ex) {
-                System.out.println("Error: " + ex.getMessage());
-            } catch (Exception ex) {
-                ex.printStackTrace();
             }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return;
         }
+
+        double googleBotShare = (googleBotRequests / (double) totalRequests) * 100;
+        double yandexBotShare = (yandexBotRequests / (double) totalRequests) * 100;
+        System.out.println("Googlebot: " + googleBotShare + "%");
+        System.out.println("Yandexbot: " + yandexBotShare + "%");
+
     }
 }
