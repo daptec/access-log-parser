@@ -3,6 +3,7 @@ package com.stepup;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class Statistics {
 
@@ -10,23 +11,33 @@ public class Statistics {
     private LocalDateTime minTime;
     private LocalDateTime maxTime;
     private final Set<String> existingPages;
-    private final Set<String> notFoundPages;
-    private final Map<String, Integer> osCounter;
-    private final Map<String, Integer> browserCounter;
+    private final Set<String> nonExistingPages;
+    private final Map<String, Integer> osStats;
+    private final Map<String, Integer> browserStats;
+    private int totalVisits;
+    private int errorRequests;
+    private final Set<String> realUserIPs;
 
     public Statistics() {
         this.totalTraffic = 0;
         this.minTime = LocalDateTime.MAX;
         this.maxTime = LocalDateTime.MIN;
         this.existingPages = new HashSet<>();
-        this.notFoundPages = new HashSet<>();
-        this.osCounter = new HashMap<>();
-        this.browserCounter = new HashMap<>();
+        this.nonExistingPages = new HashSet<>();
+        this.osStats = new HashMap<>();
+        this.browserStats = new HashMap<>();
+        this.totalVisits = 0;
+        this.errorRequests = 0;
+        this.realUserIPs = new HashSet<>();
     }
 
     public void addEntry(LogEntry logEntry) {
         this.totalTraffic += logEntry.getResponseSize();
-        LocalDateTime logTime = LocalDateTime.parse(logEntry.getDateTime(), DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss Z"));
+
+        LocalDateTime logTime = LocalDateTime.parse(
+                logEntry.getDateTime(),
+                DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss Z")
+        );
 
         if (logTime.isBefore(minTime)) {
             minTime = logTime;
@@ -36,56 +47,80 @@ public class Statistics {
             maxTime = logTime;
         }
 
-        int statusCode = logEntry.getStatusCode();
-        if (statusCode == 200) {
+        if (logEntry.getStatusCode() == 200) {
             existingPages.add(logEntry.getRequestPath());
-        } else if (statusCode == 404) {
-            notFoundPages.add(logEntry.getRequestPath());
         }
 
-        UserAgent userAgent = new UserAgent(logEntry.getUserAgent());
-        String os = userAgent.getOs().name();
-        String browser = userAgent.getBrowser().name();
+        if (logEntry.getStatusCode() == 404) {
+            nonExistingPages.add(logEntry.getRequestPath());
+        }
 
-        osCounter.put(os, osCounter.getOrDefault(os, 0) + 1);
-        browserCounter.put(browser, browserCounter.getOrDefault(browser, 0) + 1);
+        UserAgent ua = new UserAgent(logEntry.getUserAgent());
+
+        String os = ua.getOs().name();
+        osStats.put(os, osStats.getOrDefault(os, 0) + 1);
+
+        String browser = ua.getBrowser().name();
+        browserStats.put(browser, browserStats.getOrDefault(browser, 0) + 1);
+
+        if (!logEntry.getUserAgent().toLowerCase().contains("bot")) {
+            totalVisits++;
+            realUserIPs.add(logEntry.getIpAddress());
+        }
+
+        int code = logEntry.getStatusCode();
+        if (code >= 400 && code < 600) {
+            errorRequests++;
+        }
     }
 
     public double getTrafficRate() {
-        long hoursDifference = java.time.Duration.between(minTime, maxTime).toHours();
-        if (hoursDifference == 0) {
-            return 0;
-        }
-        return (double) totalTraffic / hoursDifference;
+        long hours = java.time.Duration.between(minTime, maxTime).toHours();
+        if (hours == 0) return 0;
+        return (double) totalTraffic / hours;
     }
 
     public List<String> getExistingPages() {
         return new ArrayList<>(existingPages);
     }
 
-    public List<String> getNotFoundPages() {
-        return new ArrayList<>(notFoundPages);
+    public List<String> getNonExistingPages() {
+        return new ArrayList<>(nonExistingPages);
     }
 
     public Map<String, Double> getOperatingSystemStats() {
-        Map<String, Double> stats = new HashMap<>();
-        int total = osCounter.values().stream().mapToInt(Integer::intValue).sum();
-
-        for (Map.Entry<String, Integer> entry : osCounter.entrySet()) {
-            stats.put(entry.getKey(), (double) entry.getValue() / total);
-        }
-
-        return stats;
+        return computeProportions(osStats);
     }
 
     public Map<String, Double> getBrowserStats() {
-        Map<String, Double> stats = new HashMap<>();
-        int total = browserCounter.values().stream().mapToInt(Integer::intValue).sum();
+        return computeProportions(browserStats);
+    }
 
-        for (Map.Entry<String, Integer> entry : browserCounter.entrySet()) {
-            stats.put(entry.getKey(), (double) entry.getValue() / total);
-        }
+    private Map<String, Double> computeProportions(Map<String, Integer> rawMap) {
+        int total = rawMap.values().stream().mapToInt(Integer::intValue).sum();
+        if (total == 0) return Collections.emptyMap();
+        return rawMap.entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        entry -> (double) entry.getValue() / total
+                ));
+    }
 
-        return stats;
+    public double getAverageVisitsPerHour() {
+        long hours = java.time.Duration.between(minTime, maxTime).toHours();
+        if (hours == 0) return 0;
+        return (double) totalVisits / hours;
+    }
+
+    public double getAverageErrorsPerHour() {
+        long hours = java.time.Duration.between(minTime, maxTime).toHours();
+        if (hours == 0) return 0;
+        return (double) errorRequests / hours;
+    }
+
+    public double getAverageVisitsPerUser() {
+        if (realUserIPs.isEmpty()) return 0;
+        return (double) totalVisits / realUserIPs.size();
     }
 }
+
