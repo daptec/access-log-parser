@@ -1,126 +1,108 @@
 package com.stepup;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class Statistics {
 
     private int totalTraffic;
     private LocalDateTime minTime;
     private LocalDateTime maxTime;
-    private final Set<String> existingPages;
-    private final Set<String> nonExistingPages;
-    private final Map<String, Integer> osStats;
-    private final Map<String, Integer> browserStats;
-    private int totalVisits;
-    private int errorRequests;
-    private final Set<String> realUserIPs;
+
+    private final Set<String> existingPages = new HashSet<>();
+    private final Set<String> notFoundPages = new HashSet<>();
+
+    private final Map<String, Integer> osCount = new HashMap<>();
+    private final Map<String, Integer> browserCount = new HashMap<>();
+
+    private int totalVisits = 0;
+    private int errorCount = 0;
+    private final Set<String> realUserIps = new HashSet<>();
+
+    private final Map<Integer, Integer> visitsPerSecond = new HashMap<>();
+    private final Set<String> refererDomains = new HashSet<>();
+    private final Map<String, Integer> visitsPerUser = new HashMap<>();
+
+    private final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss Z");
 
     public Statistics() {
         this.totalTraffic = 0;
         this.minTime = LocalDateTime.MAX;
         this.maxTime = LocalDateTime.MIN;
-        this.existingPages = new HashSet<>();
-        this.nonExistingPages = new HashSet<>();
-        this.osStats = new HashMap<>();
-        this.browserStats = new HashMap<>();
-        this.totalVisits = 0;
-        this.errorRequests = 0;
-        this.realUserIPs = new HashSet<>();
     }
 
     public void addEntry(LogEntry logEntry) {
-        this.totalTraffic += logEntry.getResponseSize();
+        totalTraffic += logEntry.getResponseSize();
 
-        LocalDateTime logTime = LocalDateTime.parse(
-                logEntry.getDateTime(),
-                DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss Z")
-        );
-
-        if (logTime.isBefore(minTime)) {
-            minTime = logTime;
-        }
-
-        if (logTime.isAfter(maxTime)) {
-            maxTime = logTime;
-        }
+        LocalDateTime logTime = LocalDateTime.parse(logEntry.getDateTime(), formatter);
+        if (logTime.isBefore(minTime)) minTime = logTime;
+        if (logTime.isAfter(maxTime)) maxTime = logTime;
 
         if (logEntry.getStatusCode() == 200) {
             existingPages.add(logEntry.getRequestPath());
+        } else if (logEntry.getStatusCode() == 404) {
+            notFoundPages.add(logEntry.getRequestPath());
         }
 
-        if (logEntry.getStatusCode() == 404) {
-            nonExistingPages.add(logEntry.getRequestPath());
-        }
+        UserAgent userAgent = new UserAgent(logEntry.getUserAgent());
+        String os = userAgent.getOs().toString();
+        osCount.put(os, osCount.getOrDefault(os, 0) + 1);
 
-        UserAgent ua = new UserAgent(logEntry.getUserAgent());
+        String browser = userAgent.getBrowser().toString();
+        browserCount.put(browser, browserCount.getOrDefault(browser, 0) + 1);
 
-        String os = ua.getOs().name();
-        osStats.put(os, osStats.getOrDefault(os, 0) + 1);
+        boolean isBot = logEntry.getUserAgent().toLowerCase().contains("bot");
 
-        String browser = ua.getBrowser().name();
-        browserStats.put(browser, browserStats.getOrDefault(browser, 0) + 1);
-
-        if (!logEntry.getUserAgent().toLowerCase().contains("bot")) {
+        if (!isBot) {
             totalVisits++;
-            realUserIPs.add(logEntry.getIpAddress());
+
+            // Для пиковой посещаемости (в секунду)
+            int secondKey = logTime.getHour() * 3600 + logTime.getMinute() * 60 + logTime.getSecond();
+            visitsPerSecond.put(secondKey, visitsPerSecond.getOrDefault(secondKey, 0) + 1);
+
+            // Уникальные IP-адреса пользователей
+            realUserIps.add(logEntry.getIpAddress());
+
+            // Подсчет посещений одним пользователем
+            visitsPerUser.put(
+                    logEntry.getIpAddress(),
+                    visitsPerUser.getOrDefault(logEntry.getIpAddress(), 0) + 1
+            );
         }
 
-        int code = logEntry.getStatusCode();
-        if (code >= 400 && code < 600) {
-            errorRequests++;
+        if (logEntry.getStatusCode() >= 400 && logEntry.getStatusCode() < 600) {
+            errorCount++;
+        }
+
+        // Парсинг домена из referer
+        String referer = logEntry.getReferer();
+        if (!referer.isEmpty()) {
+            try {
+                URI uri = new URI(referer);
+                String host = uri.getHost();
+                if (host != null) {
+                    refererDomains.add(host.startsWith("www.") ? host.substring(4) : host);
+                }
+            } catch (URISyntaxException e) {
+                // некорректный реферер — игнорируем
+            }
         }
     }
 
-    public double getTrafficRate() {
-        long hours = java.time.Duration.between(minTime, maxTime).toHours();
-        if (hours == 0) return 0;
-        return (double) totalTraffic / hours;
+    public int getPeakTrafficPerSecond() {
+        return visitsPerSecond.values().stream().max(Integer::compareTo).orElse(0);
     }
 
-    public List<String> getExistingPages() {
-        return new ArrayList<>(existingPages);
+    public List<String> getRefererDomains() {
+        return new ArrayList<>(refererDomains);
     }
 
-    public List<String> getNonExistingPages() {
-        return new ArrayList<>(nonExistingPages);
-    }
-
-    public Map<String, Double> getOperatingSystemStats() {
-        return computeProportions(osStats);
-    }
-
-    public Map<String, Double> getBrowserStats() {
-        return computeProportions(browserStats);
-    }
-
-    private Map<String, Double> computeProportions(Map<String, Integer> rawMap) {
-        int total = rawMap.values().stream().mapToInt(Integer::intValue).sum();
-        if (total == 0) return Collections.emptyMap();
-        return rawMap.entrySet().stream()
-                .collect(Collectors.toMap(
-                        Map.Entry::getKey,
-                        entry -> (double) entry.getValue() / total
-                ));
-    }
-
-    public double getAverageVisitsPerHour() {
-        long hours = java.time.Duration.between(minTime, maxTime).toHours();
-        if (hours == 0) return 0;
-        return (double) totalVisits / hours;
-    }
-
-    public double getAverageErrorsPerHour() {
-        long hours = java.time.Duration.between(minTime, maxTime).toHours();
-        if (hours == 0) return 0;
-        return (double) errorRequests / hours;
-    }
-
-    public double getAverageVisitsPerUser() {
-        if (realUserIPs.isEmpty()) return 0;
-        return (double) totalVisits / realUserIPs.size();
+    public int getMaxVisitsPerUser() {
+        return visitsPerUser.values().stream().max(Integer::compareTo).orElse(0);
     }
 }
+
 
